@@ -1,0 +1,294 @@
+C51 COMPILER V9.60.0.0   MAIN                                                              04/14/2021 14:58:10 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: C:\Keil_v5\C51\BIN\C51.EXE main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main
+                    -.lst) TABS(2) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+   1          /**********************************************************
+   2          EE337: ADC IC MCP3008 interfacing with pt-51
+   3          (1) Complete spi_init() function from spi.h 
+   4          (2) Uncomment LM35 interfacing code from main function
+   5              Choose appropriate scaling factor for converting temperature 
+   6              sensor reading sampled using ADC such that it will be in 
+   7              degree Celsius and display it on the LCD)
+   8          ***********************************************************/
+   9          
+  10          #include <at89c5131.h>
+  11          #include "serial.c"                         //Driver for interfacing lcd 
+  12          #include "mcp3008.h"                        //Driver for interfacing ADC ic MCP3008
+  13          
+  14          /***************************************************************
+  15          FUNCTION DECLARATIONS
+  16          *************************************************************/
+  17          float avg_calc(float temp_data[]);
+  18          void alarm(unsigned int f, unsigned int t);
+  19          void timer_init(void);
+  20          void temp_ar_updater(void);
+  21          void int_to_string(unsigned int val,unsigned char *temp_str_data);
+  22          void msdelay(unsigned int time);
+  23          
+  24          /***************************************************************
+  25          GLOBAL VARIABLES USED
+  26          *************************************************************/
+  27          
+  28          sbit audio_op = P0^0;           // alarm output port
+  29          unsigned int t_int_count = 0; // temp interrupt counter
+  30          float temp_arr[10] = {0};   // array to store temperatures
+  31          float temperature;        // temperature reading
+  32          unsigned int adc_val;     // value received
+  33          int counter = 0;        // temperature array index
+  34          
+  35          /**********************************************************
+  36            int_to_string(<integer_value>,<string_ptr>): 
+  37            Converts integer to string of length 5
+  38          ***********************************************************/  
+  39          void int_to_string(unsigned int val,unsigned char *temp_str_data){  
+  40   1        temp_str_data[0]=48+(val/100);
+  41   1        temp_str_data[1]=48+((val%100)/10);
+  42   1        temp_str_data[3]=48+(val%10);
+  43   1      }
+  44          
+  45          
+  46          /**********************************************************
+  47             msdelay(<time_val>): 
+  48            Delay function for delay value <time_val>ms
+  49          ***********************************************************/  
+  50          void msdelay(unsigned int time)
+  51          {
+  52   1        int i,j;
+  53   1        for(i=0;i<time;i++)
+  54   1        {
+C51 COMPILER V9.60.0.0   MAIN                                                              04/14/2021 14:58:10 PAGE 2   
+
+  55   2          for(j=0;j<382;j++);
+  56   2        }
+  57   1      }
+  58          
+  59          
+  60          /***************************************************************
+  61          AVERAGE CALCULATOR FUNCTION
+  62          *************************************************************/
+  63          
+  64          float avg_calc(float temp_data[]){
+  65   1      
+  66   1        unsigned int num_temp = 10;
+  67   1        float sum = 0;
+  68   1        unsigned int zeros = 0;
+  69   1        unsigned int i = 0;
+  70   1        float avg = 0.0;
+  71   1      
+  72   1        for(i=0; i<num_temp; i++){
+  73   2          sum += temp_data[i];
+  74   2          if(temp_data[i]==0){
+  75   3            zeros+=1;
+  76   3          }
+  77   2        }
+  78   1        avg = (float) (sum/(num_temp)); // Remove the "-zeros" part to observe out of range alarm during the star
+             -t of code
+  79   1        return avg;
+  80   1      }
+  81          
+  82          /***************************************************************
+  83          ALARM FUNCTION
+  84          *************************************************************/
+  85          
+  86          void alarm(unsigned int f, unsigned int t){
+  87   1          unsigned int h_delay = (unsigned int) (500/f);
+  88   1        unsigned int count = (unsigned int) (t*f);
+  89   1        
+  90   1        audio_op = 1;
+  91   1      
+  92   1        while(count){
+  93   2          msdelay(h_delay);
+  94   2          audio_op = ~(audio_op);
+  95   2          count -= 1;
+  96   2        }
+  97   1      }
+  98          
+  99          
+ 100          /***************************************************************
+ 101          TIMER INIT FUNCTION
+ 102          *************************************************************/
+ 103          
+ 104          // void timer_init(void){
+ 105          //  TMOD &= 0x0F1;
+ 106          //  TMOD |= 0x01;
+ 107          //  TR0 = 0;
+ 108          //  TF0 = 0;
+ 109          //  TH0 = 0;
+ 110          //  TL0 = 0;
+ 111          //  ET0 = 1;
+ 112          //  EA = 1;
+ 113          //  TR0 = 1;   
+ 114          // }
+ 115          
+C51 COMPILER V9.60.0.0   MAIN                                                              04/14/2021 14:58:10 PAGE 3   
+
+ 116          /***************************************************************
+ 117          LCD VARIABLES
+ 118          *************************************************************/
+ 119          
+ 120          char adc_ip_data_ascii[5]={0,0,'.',0, '\0'};      
+ 121          code unsigned char display_msg2[]="Avg. Temp: ";    
+ 122          code unsigned char display_alert[]="TEMP RANGE ALERT";  
+ 123          
+ 124          /***************************************************************
+ 125          MAIN FUNCTION
+ 126          *************************************************************/
+ 127          
+ 128          void main(void)
+ 129          { 
+ 130   1        unsigned int x;
+ 131   1        float avg_temp;
+ 132   1        unsigned int var = 0; // state of machine i.e. alarm mode or normal mode
+ 133   1        unsigned int ctr = 0; // for 4 sec alarm 
+ 134   1        float temp_prev1 = 0;   // last temp reading
+ 135   1        float temp_prev2 = 0;   // last-to-last temp reading
+ 136   1      
+ 137   1        spi_init();                                         
+ 138   1        adc_init();
+ 139   1          uart_init();
+ 140   1        // timer_init();
+ 141   1        
+ 142   1        
+ 143   1        while(1)
+ 144   1        {
+ 145   2          
+ 146   2          temp_prev2 = temp_prev1;
+ 147   2          temp_prev1 = temperature;
+ 148   2      
+ 149   2          x = adc(7);               
+ 150   2          temperature = (x*0.1*3.2258); 
+ 151   2      
+ 152   2          temp_arr[counter] = temperature;
+ 153   2      
+ 154   2      
+ 155   2          if(ctr==0){
+ 156   3      
+ 157   3            avg_temp = avg_calc(temp_arr);
+ 158   3      
+ 159   3            if((temperature>(avg_temp+2)) | (temperature<(avg_temp-2))){
+ 160   4                var=1;
+ 161   4              }
+ 162   3            else{
+ 163   4              var = 0;
+ 164   4            }
+ 165   3          }
+ 166   2      
+ 167   2          switch (var) {
+ 168   3            case 0: 
+ 169   3      
+ 170   3              // transmit_string("Counter: ")
+ 171   3              // int_to_string(counter*10, adc_ip_data_ascii);
+ 172   3              // transmit_string(adc_ip_data_ascii);
+ 173   3              // transmit_string("\r\n");
+ 174   3      
+ 175   3              transmit_string("Temp: ");
+ 176   3              
+ 177   3              int_to_string(temperature*10, adc_ip_data_ascii);
+C51 COMPILER V9.60.0.0   MAIN                                                              04/14/2021 14:58:10 PAGE 4   
+
+ 178   3              transmit_string(adc_ip_data_ascii);
+ 179   3              transmit_string(" ");
+ 180   3              
+ 181   3              int_to_string(temp_prev1*10, adc_ip_data_ascii);
+ 182   3              transmit_string(adc_ip_data_ascii);
+ 183   3              transmit_string(" ");
+ 184   3      
+ 185   3              int_to_string(temp_prev2*10, adc_ip_data_ascii);
+ 186   3              transmit_string(adc_ip_data_ascii);
+ 187   3              transmit_string("\r\n");
+ 188   3      
+ 189   3              // avg_temp = avg_calc(temp_arr);
+ 190   3              int_to_string(avg_temp*10, adc_ip_data_ascii);
+ 191   3              transmit_string("Avg. Temp: ");
+ 192   3              transmit_string(adc_ip_data_ascii);
+ 193   3              transmit_string("\r\n");
+ 194   3              transmit_string("\r\n");
+ 195   3      
+ 196   3              // if((temperature>(avg_temp+2)) | (temperature<(avg_temp-2))){
+ 197   3              //  var=1;
+ 198   3              // }  
+ 199   3      
+ 200   3              msdelay(1000);
+ 201   3      
+ 202   3              break;
+ 203   3      
+ 204   3            case 1:
+ 205   3              if(ctr==0){
+ 206   4              transmit_string("TEMP RANGE ALERT");
+ 207   4              transmit_string("\r\n*");
+ 208   4              int_to_string(avg_temp*10, adc_ip_data_ascii);
+ 209   4              transmit_string("Avg. Temp: ");
+ 210   4              transmit_string(adc_ip_data_ascii);
+ 211   4              transmit_string("\r\n*");
+ 212   4              transmit_string("\r\n*");
+ 213   4              }
+ 214   3      
+ 215   3              alarm(250, 1);
+ 216   3              ctr += 1;
+ 217   3              if(ctr==4){
+ 218   4                // var = 0;
+ 219   4                ctr = 0;
+ 220   4              }
+ 221   3              break;
+ 222   3          }
+ 223   2      
+ 224   2          counter = (counter+1)%10; 
+ 225   2        }
+ 226   1        
+ 227   1      
+ 228   1      }
+ 229          
+ 230          /***************************************************************
+ 231          TIMER 0 INTERRUPT FUNCTION
+ 232          *************************************************************/
+ 233          
+ 234          // void timer0_interrupt(void) interrupt 1
+ 235          // {
+ 236          //  TR0 = 0;
+ 237          //  t_int_count += 1;
+ 238            
+ 239          //  if(t_int_count==30){
+C51 COMPILER V9.60.0.0   MAIN                                                              04/14/2021 14:58:10 PAGE 5   
+
+ 240          //    t_int_count=0;
+ 241          //    temp_ar_updater();
+ 242          //  }
+ 243          
+ 244          //  TR0 = 1;
+ 245          //  ET0 = 1;
+ 246          //  TF0 = 0;
+ 247          // }
+ 248          
+ 249          /***************************************************************
+ 250          TEMPERATURE ARRAY UPDATE FUNCTION
+ 251          *************************************************************/
+ 252          
+ 253          // void temp_ar_updater(void){
+ 254          //  adc_val = adc(7);                 //Read analog value from 0th channel of ADC Ic MCP3008
+ 255          //  temperature = (adc_val*0.1*3.2258);   //Converting received 10 bits value to milli volt (3.3*1000*i/p /
+             -1023)
+ 256            
+ 257          //  temp_arr[counter] = temperature;
+ 258          //  counter = (counter+1)%10;
+ 259          // }
+ 260          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1223    ----
+   CONSTANT SIZE    =     74    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     56      59
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      3    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
